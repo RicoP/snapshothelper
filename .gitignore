@@ -32,20 +32,20 @@
 *.app
 
 
-.aps
-.db
-.filters
-.ico
-.idb
-.ilk
-.iobj
-.ipch
-.ipdb
-.lastbuildstate
-.log
-.opendb
-.pdb
-.recipe
-.suo
-.tlog
-.user
+*.aps
+*.db
+*.filters
+*.ico
+*.idb
+*.ilk
+*.iobj
+*.ipch
+*.ipdb
+*.lastbuildstate
+*.log
+*.opendb
+*.pdb
+*.recipe
+*.suo
+*.tlog
+*.user
