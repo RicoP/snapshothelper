@@ -49,3 +49,6 @@
 *.suo
 *.tlog
 *.user
+*.res
+*/.vs/*
+source/.vs/*
