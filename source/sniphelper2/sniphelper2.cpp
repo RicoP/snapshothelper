@@ -120,7 +120,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) {
     return FALSE;
   }
 
-  ShowWindow(windowHandler, nCmdShow);
+  // ShowWindow(windowHandler, nCmdShow);
   UpdateWindow(windowHandler);
 
   return TRUE;
@@ -141,9 +141,8 @@ HWND nextClipboardViewer;
 #define MSG_UPDATECLIPBOARD (WM_APP + 1)
 static bool g_fIgnoreClipboardChange = true;
 
-void error(const char* msg) {
-  MessageBox(NULL, L"Please read the ReadMe.txt file for troubleshooting",
-             L"Error adding icon", MB_OK);
+[[noreturn]] void error(const char* msg) {
+  MessageBoxA(NULL, msg, "Error", MB_OK);
   exit(-1);
 }
 
@@ -283,13 +282,13 @@ void CreatePNGFile(HWND hwnd, char* path, PBITMAPINFO pbi, HBITMAP hBMP,
   pbih = (PBITMAPINFOHEADER)pbi;
   lpBits = (LPBYTE)GlobalAlloc(GMEM_FIXED, pbih->biSizeImage);
 
-  if (!lpBits) errhandler("GlobalAlloc", hwnd);
+  if (!lpBits) error("GlobalAlloc");
 
   // Retrieve the color table (RGBQUAD array) and the bits
   // (array of palette indices) from the DIB.
   if (!GetDIBits(hDC, hBMP, 0, (WORD)pbih->biHeight, lpBits, pbi,
                  DIB_RGB_COLORS)) {
-    errhandler("GetDIBits", hwnd);
+    error("GetDIBits");
   }
 
   cp_image_t img;
@@ -298,6 +297,7 @@ void CreatePNGFile(HWND hwnd, char* path, PBITMAPINFO pbi, HBITMAP hBMP,
 
   cp_pixel_t* pix_upside_down = (cp_pixel_t*)lpBits;
   cp_pixel_t* pix = (cp_pixel_t*)malloc(sizeof(cp_pixel_t) * img.w * img.h);
+  if (!pix) error("malloc");
 
   for (int y = 0; y < img.h; y++) {
     cp_pixel_t* row_source = &pix_upside_down[y * img.w];
@@ -311,7 +311,9 @@ void CreatePNGFile(HWND hwnd, char* path, PBITMAPINFO pbi, HBITMAP hBMP,
 
   img.pix = pix;
 
-  cp_save_png(path, &img);
+  if (cp_save_png(path, &img)) {
+    error("cp_save_png error.");
+  }
 
   // Free memory.
   free(pix);
@@ -319,7 +321,13 @@ void CreatePNGFile(HWND hwnd, char* path, PBITMAPINFO pbi, HBITMAP hBMP,
 }
 
 // Use a guid to uniquely identify our icon
-class __declspec(uuid("8D0B8B92-4E1C-488e-A1E1-2331AFCE2CB5")) PrinterIcon;
+// debug and release exe need different GUIDs
+#ifdef 
+class __declspec(uuid("207becc6-8ee6-4ce9-9746-32767249f69c")) PrinterIcon;
+#else
+class __declspec(uuid("33f9c319-8ff2-41c4-95fb-41e1e5208b61")) PrinterIcon;
+#endif  // DEBUG
+
 
 BOOL AddNotificationIcon(HWND hwnd) {
   NOTIFYICONDATA nid = {sizeof(nid)};
@@ -379,9 +387,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       // MessageBeep(MB_ICONINFORMATION);
       // add the notification icon
       if (!AddNotificationIcon(hwnd)) {
-        MessageBox(hwnd, L"Please read the ReadMe.txt file for troubleshooting",
-                   L"Error adding icon", MB_OK);
-        return -1;
+        error("Could not register Icon. is GUID not unique?");
       }
 
       {
