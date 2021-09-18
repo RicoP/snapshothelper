@@ -8,7 +8,14 @@
 #include <time.h>
 #include <windows.h>
 
+#include <algorithm>
+#include <string_view>
+#include <utility>
+
 #include "framework.h"
+
+#define CUTE_PNG_IMPLEMENTATION
+#include "cute_png.h"
 
 #define MAX_LOADSTRING 100
 
@@ -268,6 +275,49 @@ void CreateBMPFile(HWND hwnd, LPTSTR pszFile, PBITMAPINFO pbi, HBITMAP hBMP,
   GlobalFree((HGLOBAL)lpBits);
 }
 
+void CreatePNGFile(HWND hwnd, char* path, PBITMAPINFO pbi, HBITMAP hBMP,
+                   HDC hDC) {
+  PBITMAPINFOHEADER pbih;  // bitmap info-header
+  LPBYTE lpBits;           // memory pointer
+
+  pbih = (PBITMAPINFOHEADER)pbi;
+  lpBits = (LPBYTE)GlobalAlloc(GMEM_FIXED, pbih->biSizeImage);
+
+  if (!lpBits) errhandler("GlobalAlloc", hwnd);
+
+  // Retrieve the color table (RGBQUAD array) and the bits
+  // (array of palette indices) from the DIB.
+  if (!GetDIBits(hDC, hBMP, 0, (WORD)pbih->biHeight, lpBits, pbi,
+                 DIB_RGB_COLORS)) {
+    errhandler("GetDIBits", hwnd);
+  }
+
+  cp_image_t img;
+  img.w = pbi->bmiHeader.biWidth;
+  img.h = pbi->bmiHeader.biHeight;
+
+  cp_pixel_t* pix_upside_down = (cp_pixel_t*)lpBits;
+  cp_pixel_t* pix = (cp_pixel_t*)malloc(sizeof(cp_pixel_t) * img.w * img.h);
+
+  for (int y = 0; y < img.h; y++) {
+    cp_pixel_t* row_source = &pix_upside_down[y * img.w];
+    cp_pixel_t* row = &pix[(img.h - y - 1) * img.w];
+
+    for (int x = 0; x < img.w; x++) {
+      row[x] = row_source[x];
+      std::swap(row[x].r, row[x].b);
+    }
+  }
+
+  img.pix = pix;
+
+  cp_save_png(path, &img);
+
+  // Free memory.
+  free(pix);
+  GlobalFree((HGLOBAL)lpBits);
+}
+
 // Use a guid to uniquely identify our icon
 class __declspec(uuid("8D0B8B92-4E1C-488e-A1E1-2331AFCE2CB5")) PrinterIcon;
 
@@ -279,8 +329,8 @@ BOOL AddNotificationIcon(HWND hwnd) {
   nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_SHOWTIP | NIF_GUID;
   nid.guidItem = __uuidof(PrinterIcon);
   nid.uCallbackMessage = WMAPP_NOTIFYCALLBACK;
-  auto result = LoadIconMetric(g_hInst, MAKEINTRESOURCE(IDI_NOTIFICATIONICON), LIM_SMALL,
-                 &nid.hIcon);
+  auto result = LoadIconMetric(g_hInst, MAKEINTRESOURCE(IDI_NOTIFICATIONICON),
+                               LIM_SMALL, &nid.hIcon);
   LoadString(g_hInst, IDS_TOOLTIP, nid.szTip, ARRAYSIZE(nid.szTip));
   Shell_NotifyIcon(NIM_ADD, &nid);
 
@@ -289,14 +339,12 @@ BOOL AddNotificationIcon(HWND hwnd) {
   return Shell_NotifyIcon(NIM_SETVERSION, &nid);
 }
 
-
 BOOL DeleteNotificationIcon() {
   NOTIFYICONDATA nid = {sizeof(nid)};
   nid.uFlags = NIF_GUID;
   nid.guidItem = __uuidof(PrinterIcon);
   return Shell_NotifyIcon(NIM_DELETE, &nid);
 }
-
 
 void ShowContextMenu(HWND hwnd, POINT pt) {
   HMENU hMenu = LoadMenu(g_hInst, MAKEINTRESOURCE(IDC_CONTEXTMENU));
@@ -321,18 +369,14 @@ void ShowContextMenu(HWND hwnd, POINT pt) {
   }
 }
 
-
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-  static wchar_t desktop_path[MAX_PATH + 1] = {};
-  static wchar_t path[MAX_PATH + 1] = {};
-
   time_t t;
   tm tm;
 
   switch (msg) {
     case WM_CREATE:
       nextClipboardViewer = SetClipboardViewer(hwnd);
-      //MessageBeep(MB_ICONINFORMATION);
+      // MessageBeep(MB_ICONINFORMATION);
       // add the notification icon
       if (!AddNotificationIcon(hwnd)) {
         MessageBox(hwnd, L"Please read the ReadMe.txt file for troubleshooting",
@@ -340,10 +384,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return -1;
       }
 
-      if (!SHGetSpecialFolderPathW(HWND_DESKTOP, desktop_path, CSIDL_DESKTOP,
-                                   FALSE))
-        error("can't get desktop path");
+      {
+        wchar_t desktop_path[MAX_PATH + 1] = {};
+        if (!SHGetSpecialFolderPathW(HWND_DESKTOP, desktop_path, CSIDL_DESKTOP,
+                                     FALSE))
+          error("can't get desktop path");
 
+        // Working directory is desktop
+        SetCurrentDirectory(desktop_path);
+      }
       break;
     case WM_CHANGECBCHAIN:
       if ((HWND)wParam == nextClipboardViewer)
@@ -360,11 +409,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
       t = time(NULL);
       localtime_s(&tm, &t);
-
-      swprintf(path, MAX_PATH,
-               L"%s\\snapshot - %d-%02d-%02d %02d-%02d-%02d.bmp", desktop_path,
-               tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
-               tm.tm_min, tm.tm_sec);
 
       // https://github.com/dspinellis/outwit/blob/master/winclip/winclip.c
       // DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hwnd, About);
@@ -385,7 +429,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             auto info = CreateBitmapInfoStruct(hwnd, cb_hnd);
 
-            CreateBMPFile(hwnd, LPTSTR(path), info, cb_hnd, hdc);
+            {
+              /*
+              wchar_t path[MAX_PATH + 1];
+              swprintf(path, MAX_PATH,
+                       L"snapshot - %d-%02d-%02d %02d-%02d-%02d.bmp",
+                       tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
+                       tm.tm_min, tm.tm_sec);
+
+              CreateBMPFile(hwnd, LPTSTR(path), info, cb_hnd, hdc);
+              */
+
+              char path[MAX_PATH];
+              sprintf_s(path, MAX_PATH,
+                        "snapshot - %d-%02d-%02d %02d-%02d-%02d.png",
+                        tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                        tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+              CreatePNGFile(hwnd, path, info, cb_hnd, hdc);
+            }
 
             // SelectObject(hdc, oldobj);
             DeleteDC(hdc);
@@ -396,7 +458,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       }
       break;
 
-      
     case WMAPP_NOTIFYCALLBACK:
       switch (LOWORD(lParam)) {
         case NIN_SELECT:
@@ -414,8 +475,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         } break;
       }
       break;
-
-
 
     case WM_COMMAND: {
       int wmId = LOWORD(wParam);
@@ -437,8 +496,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       // TODO: Add any drawing code that uses hdc here...
       EndPaint(hwnd, &ps);
     } break;
-
-
 
     case WM_DESTROY:
       ChangeClipboardChain(windowHandler, nextClipboardViewer);
