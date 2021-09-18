@@ -12,6 +12,11 @@
 
 #define MAX_LOADSTRING 100
 
+HINSTANCE g_hInst = NULL;
+
+UINT const WMAPP_NOTIFYCALLBACK = WM_APP + 1;
+UINT const WMAPP_HIDEFLYOUT = WM_APP + 2;
+
 // Global Variables:
 HINSTANCE hInst;                      // current instance
 WCHAR szTitle[MAX_LOADSTRING];        // The title bar text
@@ -26,6 +31,8 @@ INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                       _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR lpCmdLine,
                       _In_ int nCmdShow) {
+  g_hInst = hInstance;
+
   UNREFERENCED_PARAMETER(hPrevInstance);
   UNREFERENCED_PARAMETER(lpCmdLine);
 
@@ -127,7 +134,11 @@ HWND nextClipboardViewer;
 #define MSG_UPDATECLIPBOARD (WM_APP + 1)
 static bool g_fIgnoreClipboardChange = true;
 
-void error(const char* msg) {}
+void error(const char* msg) {
+  MessageBox(NULL, L"Please read the ReadMe.txt file for troubleshooting",
+             L"Error adding icon", MB_OK);
+  exit(-1);
+}
 
 void errhandler(const char* msg, HWND hwnd) { error(msg); }
 
@@ -257,26 +268,82 @@ void CreateBMPFile(HWND hwnd, LPTSTR pszFile, PBITMAPINFO pbi, HBITMAP hBMP,
   GlobalFree((HGLOBAL)lpBits);
 }
 
-/*
-LPWSTR desktop_directory_unicode() {
-  static wchar_t path[MAX_PATH + 1] = {};
-  if (SHGetSpecialFolderPathW(HWND_DESKTOP, path, CSIDL_DESKTOP, FALSE))
-    return path;
-  return path;
+// Use a guid to uniquely identify our icon
+class __declspec(uuid("8D0B8B92-4E1C-488e-A1E1-2331AFCE2CB5")) PrinterIcon;
+
+BOOL AddNotificationIcon(HWND hwnd) {
+  NOTIFYICONDATA nid = {sizeof(nid)};
+  nid.hWnd = hwnd;
+  // add the icon, setting the icon, tooltip, and callback message.
+  // the icon will be identified with the GUID
+  nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_SHOWTIP | NIF_GUID;
+  nid.guidItem = __uuidof(PrinterIcon);
+  nid.uCallbackMessage = WMAPP_NOTIFYCALLBACK;
+  auto result = LoadIconMetric(g_hInst, MAKEINTRESOURCE(IDI_NOTIFICATIONICON), LIM_SMALL,
+                 &nid.hIcon);
+  LoadString(g_hInst, IDS_TOOLTIP, nid.szTip, ARRAYSIZE(nid.szTip));
+  Shell_NotifyIcon(NIM_ADD, &nid);
+
+  // NOTIFYICON_VERSION_4 is prefered
+  nid.uVersion = NOTIFYICON_VERSION_4;
+  return Shell_NotifyIcon(NIM_SETVERSION, &nid);
 }
-*/
+
+
+BOOL DeleteNotificationIcon() {
+  NOTIFYICONDATA nid = {sizeof(nid)};
+  nid.uFlags = NIF_GUID;
+  nid.guidItem = __uuidof(PrinterIcon);
+  return Shell_NotifyIcon(NIM_DELETE, &nid);
+}
+
+
+void ShowContextMenu(HWND hwnd, POINT pt) {
+  HMENU hMenu = LoadMenu(g_hInst, MAKEINTRESOURCE(IDC_CONTEXTMENU));
+  if (hMenu) {
+    HMENU hSubMenu = GetSubMenu(hMenu, 0);
+    if (hSubMenu) {
+      // our window must be foreground before calling TrackPopupMenu or the menu
+      // will not disappear when the user clicks away
+      SetForegroundWindow(hwnd);
+
+      // respect menu drop alignment
+      UINT uFlags = TPM_RIGHTBUTTON;
+      if (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0) {
+        uFlags |= TPM_RIGHTALIGN;
+      } else {
+        uFlags |= TPM_LEFTALIGN;
+      }
+
+      TrackPopupMenuEx(hSubMenu, uFlags, pt.x, pt.y, hwnd, NULL);
+    }
+    DestroyMenu(hMenu);
+  }
+}
+
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   static wchar_t desktop_path[MAX_PATH + 1] = {};
   static wchar_t path[MAX_PATH + 1] = {};
 
-  time_t t = time(NULL);
+  time_t t;
   tm tm;
 
   switch (msg) {
     case WM_CREATE:
       nextClipboardViewer = SetClipboardViewer(hwnd);
-      MessageBeep(MB_ICONINFORMATION);
+      //MessageBeep(MB_ICONINFORMATION);
+      // add the notification icon
+      if (!AddNotificationIcon(hwnd)) {
+        MessageBox(hwnd, L"Please read the ReadMe.txt file for troubleshooting",
+                   L"Error adding icon", MB_OK);
+        return -1;
+      }
+
+      if (!SHGetSpecialFolderPathW(HWND_DESKTOP, desktop_path, CSIDL_DESKTOP,
+                                   FALSE))
+        error("can't get desktop path");
+
       break;
     case WM_CHANGECBCHAIN:
       if ((HWND)wParam == nextClipboardViewer)
@@ -284,16 +351,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       else if (nextClipboardViewer != NULL)
         SendMessage(nextClipboardViewer, msg, wParam, lParam);
       break;
+
     case WM_DRAWCLIPBOARD:
       if (g_fIgnoreClipboardChange) {
         g_fIgnoreClipboardChange = false;
         break;
       }
 
-      if (!SHGetSpecialFolderPathW(HWND_DESKTOP, desktop_path, CSIDL_DESKTOP,
-                                   FALSE))
-        error("can't get desktop path");
-
+      t = time(NULL);
       localtime_s(&tm, &t);
 
       swprintf(path, MAX_PATH,
@@ -331,6 +396,27 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       }
       break;
 
+      
+    case WMAPP_NOTIFYCALLBACK:
+      switch (LOWORD(lParam)) {
+        case NIN_SELECT:
+          break;
+
+        case NIN_BALLOONTIMEOUT:
+          break;
+
+        case NIN_BALLOONUSERCLICK:
+          break;
+
+        case WM_CONTEXTMENU: {
+          POINT const pt = {LOWORD(wParam), HIWORD(wParam)};
+          ShowContextMenu(hwnd, pt);
+        } break;
+      }
+      break;
+
+
+
     case WM_COMMAND: {
       int wmId = LOWORD(wParam);
       // Parse the menu selections:
@@ -351,8 +437,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       // TODO: Add any drawing code that uses hdc here...
       EndPaint(hwnd, &ps);
     } break;
+
+
+
     case WM_DESTROY:
       ChangeClipboardChain(windowHandler, nextClipboardViewer);
+      DeleteNotificationIcon();
       PostQuitMessage(0);
       break;
     default:
@@ -377,3 +467,8 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {
   }
   return (INT_PTR)FALSE;
 }
+
+#pragma comment( \
+    linker,      \
+    "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+#pragma comment(lib, "comctl32.lib")

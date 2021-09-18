@@ -12,7 +12,19 @@
 #define IDI_SNIPHELPER2			107
 #define IDI_SMALL				108
 #define IDC_SNIPHELPER2			109
+#define IDS_TOOLTIP 110
+
 #define IDC_MYICON				2
+
+
+#define IDI_NOTIFICATIONICON 207
+#define IDC_NOTIFICATIONICON 208
+#define IDC_CONTEXTMENU 209
+
+#define IDM_FLYOUT 126
+
+
+
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
 #endif
